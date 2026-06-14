@@ -90,6 +90,10 @@ export class MouseInput {
       // In pointer-lock, movementX/Y gives raw delta (browser-corrected).
       this.dx += e.movementX;
       this.dy += e.movementY;
+    } else if (this.buttons.has('left')) {
+      // Pointer lock can be unavailable in embedded browsers; dragging still aims.
+      this.dx += e.movementX;
+      this.dy += e.movementY;
     }
     this.emit({
       type: 'move',

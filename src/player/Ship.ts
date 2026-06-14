@@ -5,7 +5,7 @@
  *  - position (Vector3, world)
  *  - rotation (Quaternion, world)
  *  - linearVelocity (Vector3, world)
- *  - angularVelocity (Vector3, body-local axes: roll=X, pitch=Y, yaw=Z)
+ *  - angularVelocity (Vector3, body-local axes: pitch=X, yaw=Y, roll=Z)
  *
  * Performance: 200 stars × ~3 planets = 600 moving objects, so we keep
  * math minimal — no Havok for the MVP (Havok is great but adds 4MB+ to
@@ -20,7 +20,7 @@ import type { Scene } from '@babylonjs/core/scene.js';
 export class Ship {
   readonly node: TransformNode;
   readonly linearVelocity = new Vector3(0, 0, 0);
-  /** Body-local angular velocity. Roll=X, Pitch=Y, Yaw=Z (radians/sec). */
+  /** Body-local angular velocity. Pitch=X, Yaw=Y, Roll=Z (radians/sec). */
   readonly angularVelocity = new Vector3(0, 0, 0);
 
   constructor(scene: Scene, name: string = 'player-ship') {

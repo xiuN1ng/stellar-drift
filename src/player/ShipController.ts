@@ -14,7 +14,7 @@
  *
  * Inputs consumed:
  *  - thrust-x / thrust-y / thrust-z (WASD + Space/Ctrl)
- *  - roll / pitch / yaw (QE / IK / JL)
+ *  - pitch / yaw / roll (IK / arrow left-right / QE)
  *  - boost (Shift)
  *  - mouseDelta (for yaw/pitch on camera-relative aim)
  */
@@ -73,15 +73,14 @@ export class ShipController {
     const delta = this.mouse.consumeDelta();
     if (delta.dx !== 0 || delta.dy !== 0) {
       // Apply yaw from horizontal delta, pitch from vertical delta.
-      const yaw = -delta.dx * opts.mouseSensitivity;
-      const pitch = -delta.dy * opts.mouseSensitivity;
-      this.applyAngularDelta(yaw, pitch, 0, dt);
+      const yaw = delta.dx * opts.mouseSensitivity;
+      const pitch = delta.dy * opts.mouseSensitivity;
+      this.applyAngularDelta(pitch, yaw, 0);
     }
     this.applyAngularDelta(
-      this.keys.axis('roll') * opts.angThrottle * dt,
       this.keys.axis('pitch') * opts.angThrottle * dt,
       this.keys.axis('yaw') * opts.angThrottle * dt,
-      dt,
+      this.keys.axis('roll') * opts.angThrottle * dt,
     );
 
     // ---- Linear: thrust vector in body frame ----
@@ -127,17 +126,16 @@ export class ShipController {
     this.integrateRotation(dt);
   }
 
-  /** Apply instantaneous angular impulse (radians), in body axes. */
+  /** Apply instantaneous angular impulse (radians), in body axes: pitch=X, yaw=Y, roll=Z. */
   private applyAngularDelta(
-    roll: number,
     pitch: number,
     yaw: number,
-    _dt: number,
+    roll: number,
   ): void {
     // These are velocity contributions; integrate over dt.
-    this.ship.angularVelocity.x += roll;
-    this.ship.angularVelocity.y += pitch;
-    this.ship.angularVelocity.z += yaw;
+    this.ship.angularVelocity.x += pitch;
+    this.ship.angularVelocity.y += yaw;
+    this.ship.angularVelocity.z += roll;
   }
 
   /** Integrate rotation from angular velocity (body-local). */
@@ -146,7 +144,7 @@ export class ShipController {
     if (av.lengthSquared() < 1e-8) return;
 
     const angle = av.length() * dt;
-    const axis = av.normalize();
+    const axis = av.clone().normalize();
 
     // Build a quaternion that rotates by `angle` around `axis` in body-local space.
     const half = angle * 0.5;

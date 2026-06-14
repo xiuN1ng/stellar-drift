@@ -70,7 +70,7 @@ export class KeyboardInput {
       case 'pitch':
         return (this.down.has('KeyI') ? 1 : 0) - (this.down.has('KeyK') ? 1 : 0);
       case 'yaw':
-        return (this.down.has('KeyL') ? 1 : 0) - (this.down.has('KeyJ') ? 1 : 0);
+        return (this.down.has('ArrowRight') ? 1 : 0) - (this.down.has('ArrowLeft') ? 1 : 0);
       case 'boost':
         return this.down.has('ShiftLeft') || this.down.has('ShiftRight') ? 1 : 0;
     }
