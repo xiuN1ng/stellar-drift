@@ -72,6 +72,7 @@ export interface PlanetRecord {
   biomes: BiomeClass[];
   radius: number;          // scene units
   orbitRadius: number;     // scene units, distance from star
+  orbitInclination: number; // scene units, vertical offset of orbital plane
   orbitPeriod: number;     // seconds (game-time, for animation)
   seed: number;            // used to derive terrain features
   resources: Array<{ kind: ResourceKind; richness: number }>;

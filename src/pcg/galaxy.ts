@@ -121,9 +121,18 @@ function buildPlanet(
   total: number,
 ): PlanetRecord {
   const cls = pickPlanetClass(rng, orbitIndex, total);
-  const orbitRadius = 30 + orbitIndex * 22 + rng.range(0, 8);
+  // Orbit spacing: 30 base + 35 per index. The first planet lands at ~30, the
+  // fifth at ~170 — comparable to inner solar system scale (Mercury 0.39 AU,
+  // Jupiter 5.2 AU → ~5 AU of useful space; here 140 / 30 ≈ 4.7x growth).
+  // Slight jitter (-2..+6) keeps the layout irregular without overlapping
+  // the inner star.
+  const orbitRadius = 30 + orbitIndex * 35 + rng.range(-2, 6);
+  // Inclination: keep every planet on its own slightly tilted plane so they
+  // don't all line up along +X. Each orbit index maps to a deterministic
+  // inclination in [-12, 12] scene units (per-orbit vertical offset).
+  const orbitInclination = Math.sin(orbitIndex * 1.7) * 12;
   const radius = cls.startsWith('gas') || cls === 'ice-giant'
-    ? rng.range(4, 7)
+    ? rng.range(3, 5)
     : rng.range(0.8, 2.2);
   const biomes = BIOMES_BY_PLANET[cls];
   const hasAtmosphere = !['moon'].includes(cls) && rng.chance(0.7);
@@ -150,6 +159,7 @@ function buildPlanet(
     biomes,
     radius,
     orbitRadius,
+    orbitInclination,
     orbitPeriod: Math.sqrt(orbitRadius ** 3) * 4,
     seed,
     resources,

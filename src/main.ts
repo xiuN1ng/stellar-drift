@@ -40,7 +40,10 @@ import { getArchetypeBehavior } from '@player/archetype.js';
 import type { GalaxyCoord } from '@game-types/index';
 
 const STARTING_COORD: GalaxyCoord = { x: 0, y: 0, z: 0 };
-const STARTING_SHIP_POSITION = { x: 20, y: 0, z: 0 };
+// Start beyond the first planet's orbit (~30-38) but inside the second
+// (~63-69), so the player gets a clear view of the star + first planet
+// without spawning in their lap.
+const STARTING_SHIP_POSITION = { x: 55, y: 0, z: 0 };
 const BASE_CARGO_CAP = 50;
 
 async function boot(): Promise<void> {

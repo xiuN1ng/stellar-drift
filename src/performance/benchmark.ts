@@ -32,6 +32,7 @@ function makePlanet(seed: number, overrides: Partial<PlanetRecord> = {}): Planet
     biomes: ['ocean', 'plains', 'forest'],
     radius: 1.5,
     orbitRadius: 50,
+    orbitInclination: 0,
     orbitPeriod: 100,
     seed,
     resources: [{ kind: 'iron', richness: 0.8 }, { kind: 'water', richness: 0.6 }],

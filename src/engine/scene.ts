@@ -80,6 +80,7 @@ interface PlanetRuntime {
   mesh: Mesh;
   orbitCenter: Vector3;
   orbitRadius: number;
+  orbitInclination: number;
   orbitSpeed: number;
   orbitPhase: number;
   atmosphereMesh: Mesh;
@@ -202,7 +203,7 @@ export function createStarterScene(
       );
       planetMesh.position = new Vector3(
         starMesh.position.x + planet.orbitRadius,
-        starMesh.position.y,
+        starMesh.position.y + planet.orbitInclination,
         starMesh.position.z,
       );
 
@@ -263,6 +264,7 @@ export function createStarterScene(
         mesh: planetMesh,
         orbitCenter: starMesh.position.clone(),
         orbitRadius: planet.orbitRadius,
+        orbitInclination: planet.orbitInclination,
         orbitSpeed,
         orbitPhase: (planet.seed % 360) * Math.PI / 180, // pseudo-random start angle
         atmosphereMesh,
@@ -334,8 +336,9 @@ export function createStarterScene(
         const a = p.orbitPhase + elapsed * p.orbitSpeed;
         const px = p.orbitCenter.x + Math.cos(a) * p.orbitRadius;
         const pz = p.orbitCenter.z + Math.sin(a) * p.orbitRadius;
-        // Subtle vertical wobble.
-        const py = p.orbitCenter.y + Math.sin(a * 1.7) * (p.orbitRadius * 0.05);
+        // Vertical wobble is layered on top of the per-orbit inclination so
+        // each planet stays on its own slightly tilted plane.
+        const py = p.orbitCenter.y + p.orbitInclination + Math.sin(a * 1.7) * (p.orbitRadius * 0.05);
         p.mesh.position.set(px, py, pz);
 
         if (p.atmosphereMesh !== p.mesh) {
