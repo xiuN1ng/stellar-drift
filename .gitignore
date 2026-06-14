@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+dist-ssr/
+build/
+
+# Cache & logs
+.cache/
+.mavis/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# TypeScript build artifacts (compiled from .ts)
+*.tsbuildinfo
+src/**/*.js
+vite.config.js
+
+# Screenshots (debug artifacts; not source)
+screenshots/
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Misc
+.vite/

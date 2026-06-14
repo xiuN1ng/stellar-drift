@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "useDefineForClassFields": true,
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@pcg/*": ["src/pcg/*"],
+      "@engine/*": ["src/engine/*"],
+      "@input/*": ["src/input/*"],
+      "@ui/*": ["src/ui/*"],
+      "@player/*": ["src/player/*"],
+      "@save/*": ["src/save/*"],
+      "@performance/*": ["src/performance/*"],
+      "@game-types/*": ["src/types/*"]
+    },
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}
