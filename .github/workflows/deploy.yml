@@ -29,8 +29,9 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        # --no-optional: skip platform-specific esbuild binaries (aix-ppc64 etc.) that are not needed on Linux x64
-        run: npm ci --no-optional
+        # --omit=optional: skip platform-specific esbuild binaries (aix-ppc64 etc.) that are not needed on Linux x64.
+        # Fall back to `npm install` if `npm ci` fails on lockfile integrity for the AIX-only esbuild sub-package.
+        run: npm ci --omit=optional || npm install --omit=optional --no-audit --no-fund
 
       - name: Type-check
         run: npm run typecheck
