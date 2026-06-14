@@ -25,7 +25,7 @@ import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import '@babylonjs/core/Materials/PBR/pbrMaterial.js';
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js';
 
-import type { GalaxyRecord } from '@game-types/index';
+import type { GalaxyRecord, PlanetRecord, StarRecord } from '@game-types/index';
 
 import { createSkybox } from './skybox.js';
 import {
@@ -36,17 +36,47 @@ import {
   createAtmosphereMaterial, updateAtmosphereCenter, updateAtmosphereSun,
 } from './atmosphere.js';
 import { generatePalette, paletteRgb } from '@pcg/palette.js';
-import { generateSurface } from '@pcg/planet.js';
+
+const DEFAULT_INITIAL_STAR_COUNT = 6;
+const DEFAULT_STREAMING_BUDGET_MS = 2;
+const DEFAULT_STREAMING_STARS_PER_FRAME = 1;
+const DEFAULT_STREAMING_DELAY_MS = 2000;
+const DEFAULT_STREAMING_INTERVAL_MS = 75;
+
+export interface StarterSceneOptions {
+  /** Prioritize nearby systems so the player can start immediately. */
+  priorityPosition?: { x: number; y: number; z: number };
+  /** Number of star systems to build synchronously before first render. */
+  initialStarCount?: number;
+  /** Per-frame budget for streaming the remaining systems. */
+  streamingBudgetMs?: number;
+  /** Hard cap to avoid one slow frame building too many systems. */
+  streamingStarsPerFrame?: number;
+  /** Delay non-critical background loading until the first gameplay moment is visible. */
+  streamingDelayMs?: number;
+  /** Pause between background load chunks so startup does not feel hitchy. */
+  streamingIntervalMs?: number;
+}
+
+export interface ScenePlanetScan {
+  planet: PlanetRecord;
+  center: Vector3;
+  radius: number;
+  mesh: Mesh;
+}
 
 export interface SceneHandle {
   scene: Scene;
   skybox: ReturnType<typeof createSkybox>;
   /** Update loop callable (called once per frame from main render loop). */
   tick: (dt: number) => void;
+  getNearestPlanet: (position: Vector3, maxRadius?: number) => ScenePlanetScan | null;
+  getStreamingStatus: () => { builtStars: number; totalStars: number; pendingStars: number };
   dispose: () => void;
 }
 
 interface PlanetRuntime {
+  planet: PlanetRecord;
   mesh: Mesh;
   orbitCenter: Vector3;
   orbitRadius: number;
@@ -63,7 +93,11 @@ interface StarRuntime {
   planets: PlanetRuntime[];
 }
 
-export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneHandle {
+export function createStarterScene(
+  engine: Engine,
+  galaxy: GalaxyRecord,
+  options: StarterSceneOptions = {},
+): SceneHandle {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.001, 0.001, 0.005, 1.0);
   scene.ambientColor = new Color3(0.02, 0.02, 0.04);
@@ -81,9 +115,34 @@ export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneH
 
   // Star runtime map (for tick updates).
   const starRuntimes: StarRuntime[] = [];
+  const planetRuntimes: PlanetRuntime[] = [];
   let sunDirRef: Vector3 = Vector3.Forward(); // updated when player is near a star
 
-  for (const star of galaxy.stars) {
+  const priorityPosition = new Vector3(
+    options.priorityPosition?.x ?? 0,
+    options.priorityPosition?.y ?? 0,
+    options.priorityPosition?.z ?? 0,
+  );
+  const starsByPriority = [...galaxy.stars].sort((a, b) => {
+    const da =
+      (a.position.x - priorityPosition.x) ** 2 +
+      (a.position.y - priorityPosition.y) ** 2 +
+      (a.position.z - priorityPosition.z) ** 2;
+    const db =
+      (b.position.x - priorityPosition.x) ** 2 +
+      (b.position.y - priorityPosition.y) ** 2 +
+      (b.position.z - priorityPosition.z) ** 2;
+    return da - db;
+  });
+  const initialStarCount = Math.max(1, options.initialStarCount ?? DEFAULT_INITIAL_STAR_COUNT);
+  const streamingBudgetMs = Math.max(1, options.streamingBudgetMs ?? DEFAULT_STREAMING_BUDGET_MS);
+  const streamingStarsPerFrame = Math.max(1, options.streamingStarsPerFrame ?? DEFAULT_STREAMING_STARS_PER_FRAME);
+  const streamingDelayMs = Math.max(0, options.streamingDelayMs ?? DEFAULT_STREAMING_DELAY_MS);
+  const streamingIntervalMs = Math.max(0, options.streamingIntervalMs ?? DEFAULT_STREAMING_INTERVAL_MS);
+  let nextStarIndex = 0;
+  let disposed = false;
+
+  function buildStarRuntime(star: StarRecord): void {
     const starColor = new Color3(star.color.r, star.color.g, star.color.b);
 
     // PBR star sphere.
@@ -127,9 +186,6 @@ export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneH
     for (const planet of star.planets) {
       // Compute the planet tint from its class + star color.
       const tint = planetTint(planet, starColor);
-
-      // Generate surface (heightmap + biome + resources).
-      const surface = generateSurface(planet);
 
       // Pick colors from a per-planet palette.
       const palette = generatePalette(planet.seed);
@@ -203,18 +259,68 @@ export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneH
       const orbitSpeed = (1 / Math.sqrt(planet.orbitRadius ** 3)) * 0.4;
 
       planets.push({
+        planet,
         mesh: planetMesh,
         orbitCenter: starMesh.position.clone(),
         orbitRadius: planet.orbitRadius,
         orbitSpeed,
-        orbitPhase: (surface.seed % 360) * Math.PI / 180, // pseudo-random start angle
+        orbitPhase: (planet.seed % 360) * Math.PI / 180, // pseudo-random start angle
         atmosphereMesh,
         starColor,
         planetRadius: planet.radius,
       });
+      planetRuntimes.push(planets[planets.length - 1]);
     }
 
     starRuntimes.push({ mesh: starMesh, light, planets });
+  }
+
+  function streamStarSystems(maxCount: number, maxMs: number): void {
+    const start = performance.now();
+    let built = 0;
+    while (!disposed && nextStarIndex < starsByPriority.length && built < maxCount) {
+      buildStarRuntime(starsByPriority[nextStarIndex]);
+      nextStarIndex++;
+      built++;
+      if (built > 0 && performance.now() - start >= maxMs) break;
+    }
+  }
+
+  streamStarSystems(initialStarCount, Number.POSITIVE_INFINITY);
+
+  function scheduleStreaming(): void {
+    if (disposed || nextStarIndex >= starsByPriority.length) return;
+    const buildChunk = (): void => {
+      streamStarSystems(streamingStarsPerFrame, streamingBudgetMs);
+      globalThis.setTimeout(scheduleStreaming, streamingIntervalMs);
+    };
+    if ('requestIdleCallback' in window) {
+      window.requestIdleCallback(buildChunk, { timeout: 100 });
+    } else {
+      globalThis.setTimeout(buildChunk, 0);
+    }
+  }
+
+  globalThis.setTimeout(scheduleStreaming, streamingDelayMs);
+
+  function getNearestPlanet(position: Vector3, maxRadius: number = 6): ScenePlanetScan | null {
+    let best: ScenePlanetScan | null = null;
+    let bestDist = Infinity;
+    for (const p of planetRuntimes) {
+      if (p.mesh.isDisposed() || !p.mesh.isEnabled()) continue;
+      if (p.planetRadius > maxRadius) continue;
+      const d = Vector3.Distance(position, p.mesh.position);
+      if (d < bestDist) {
+        bestDist = d;
+        best = {
+          planet: p.planet,
+          center: p.mesh.position,
+          radius: p.planetRadius,
+          mesh: p.mesh,
+        };
+      }
+    }
+    return best;
   }
 
   // Tick: animate orbits + update atmosphere centers.
@@ -253,6 +359,7 @@ export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneH
   };
 
   const dispose = (): void => {
+    disposed = true;
     skybox.dispose();
     for (const sr of starRuntimes) {
       sr.mesh.dispose();
@@ -265,7 +372,13 @@ export function createStarterScene(engine: Engine, galaxy: GalaxyRecord): SceneH
     scene.dispose();
   };
 
-  return { scene, skybox, tick, dispose };
+  const getStreamingStatus = (): { builtStars: number; totalStars: number; pendingStars: number } => ({
+    builtStars: nextStarIndex,
+    totalStars: starsByPriority.length,
+    pendingStars: Math.max(0, starsByPriority.length - nextStarIndex),
+  });
+
+  return { scene, skybox, tick, getNearestPlanet, getStreamingStatus, dispose };
 }
 
 // Export LOD constants so main.ts can frame camera.

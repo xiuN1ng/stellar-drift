@@ -37,17 +37,11 @@ import { Hud, hudStateFromPlayer } from '@ui/hud.js';
 import { StartupMenu } from '@ui/menu.js';
 import { loadOrCreate, save, flushSave, resetSave } from '@save/local.js';
 import { getArchetypeBehavior } from '@player/archetype.js';
-import type { GalaxyCoord, PlanetRecord } from '@game-types/index';
+import type { GalaxyCoord } from '@game-types/index';
 
 const STARTING_COORD: GalaxyCoord = { x: 0, y: 0, z: 0 };
+const STARTING_SHIP_POSITION = { x: 20, y: 0, z: 0 };
 const BASE_CARGO_CAP = 50;
-
-interface PlanetScan {
-  planet: PlanetRecord;
-  center: Vector3;
-  radius: number;
-  mesh: Mesh;
-}
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement | null;
@@ -89,11 +83,13 @@ async function boot(): Promise<void> {
   engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio, 2));
 
   const galaxy = generateGalaxy(STARTING_COORD);
-  const handle = createStarterScene(engine, galaxy);
+  const handle = createStarterScene(engine, galaxy, {
+    priorityPosition: STARTING_SHIP_POSITION,
+  });
 
   // 4. Player ship
   const ship = new Ship(handle.scene, 'player-ship');
-  ship.node.position.set(20, 0, 0);
+  ship.node.position.set(STARTING_SHIP_POSITION.x, STARTING_SHIP_POSITION.y, STARTING_SHIP_POSITION.z);
   ship.setRotation(Quaternion.Identity());
 
   const shipMesh = MeshBuilder.CreateCylinder('ship-body', {
@@ -204,39 +200,16 @@ async function boot(): Promise<void> {
   });
 
   // 8. State for landed mode
-  let currentSurface: { mesh: Mesh; markers: ReturnType<typeof createResourceMarkers>; planetId: string } | null = null;
+  let currentSurface: {
+    mesh: Mesh;
+    markers: ReturnType<typeof createResourceMarkers>;
+    planetId: string;
+    orbitMesh: Mesh;
+  } | null = null;
   let nearestPlanetDistance: number | null = null;
   let lastMiningStatus = '';
   let passiveIncomeTimer = 0;
   let perfLogTimer = 0;
-
-  function findNearestPlanet(maxRadius: number = 6): PlanetScan | null {
-    let best: PlanetScan | null = null;
-    let bestDist = Infinity;
-    for (const m of handle.scene.meshes as unknown as Mesh[]) {
-      if (/^star-\d+$/.test(m.name)) continue;
-      if (m.name.includes('-lod') || m.name.includes('-atm') ||
-          m.name.includes('-halo') || m.name.includes('-mat')) continue;
-      if (m.name === 'skybox' || m.name === 'ship-body' || m.name === 'ship-engine' || m.name === 'ambient') continue;
-      if (m.name.startsWith('surface-') || m.name.startsWith('marker-') || m.name.startsWith('station-')) continue;
-      if (m.parent) continue;
-      if (m.getBoundingInfo().boundingSphere.radiusWorld > maxRadius) continue;
-      const d = Vector3.Distance(ship.position, m.position);
-      if (d < bestDist) {
-        bestDist = d;
-        best = {
-          planet: {
-            id: m.name, name: m.name, class: 'rocky-ocean', biomes: [],
-            radius: m.getBoundingInfo().boundingSphere.radiusWorld,
-            orbitRadius: 0, orbitPeriod: 0, seed: 0, resources: [],
-            hasAtmosphere: false, hasWater: false, hasLife: false,
-          },
-          center: m.position, radius: m.getBoundingInfo().boundingSphere.radiusWorld, mesh: m,
-        };
-      }
-    }
-    return best;
-  }
 
   function markPlanetDiscovered(planetId: string): void {
     const isNew = ReputationSystem.discoverPlanet(player, planetId);
@@ -260,12 +233,12 @@ async function boot(): Promise<void> {
       controller.update(dt);
       handle.tick(dt);
 
-      const scanForDiscover = findNearestPlanet();
+      const scanForDiscover = handle.getNearestPlanet(ship.position);
       if (scanForDiscover && Vector3.Distance(ship.position, scanForDiscover.center) < scanForDiscover.radius * 3) {
         markPlanetDiscovered(scanForDiscover.planet.id);
       }
 
-      const scanForLand = findNearestPlanet();
+      const scanForLand = handle.getNearestPlanet(ship.position);
       if (scanForLand) {
         const tgt: LandingTarget = { center: scanForLand.center, radius: scanForLand.radius };
         const newState = landing.poll(tgt);
@@ -281,11 +254,16 @@ async function boot(): Promise<void> {
               richness: r.richness,
             })),
           );
-          currentSurface = { mesh: surfaceMesh.mesh, markers, planetId: scanForLand.planet.id };
+          currentSurface = {
+            mesh: surfaceMesh.mesh,
+            markers,
+            planetId: scanForLand.planet.id,
+            orbitMesh: scanForLand.mesh,
+          };
         }
       }
 
-      const scanForHud = findNearestPlanet();
+      const scanForHud = handle.getNearestPlanet(ship.position);
       nearestPlanetDistance = scanForHud
         ? Vector3.Distance(ship.position, scanForHud.center)
         : null;
@@ -323,12 +301,11 @@ async function boot(): Promise<void> {
       const done = landing.updateTakeoff(dt);
       if (done) {
         if (currentSurface) {
+          currentSurface.orbitMesh.setEnabled(true);
           currentSurface.mesh.dispose();
           currentSurface.markers.dispose();
           currentSurface = null;
         }
-        const scanForReenable = findNearestPlanet();
-        if (scanForReenable) scanForReenable.mesh.setEnabled(true);
         landing.state = 'orbit';
       }
       handle.tick(dt);
@@ -359,7 +336,7 @@ async function boot(): Promise<void> {
     if (currentSurface) currentSurface.markers.update(dt);
 
     if (landing.state === 'landed') {
-      const scanForTakeoff = findNearestPlanet();
+      const scanForTakeoff = handle.getNearestPlanet(ship.position);
       if (scanForTakeoff) {
         const tgt: LandingTarget = { center: scanForTakeoff.center, radius: scanForTakeoff.radius };
         landing.poll(tgt);
