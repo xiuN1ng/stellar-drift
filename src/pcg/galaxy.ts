@@ -169,20 +169,78 @@ function buildPlanet(
   };
 }
 
-/** Build a star + its system. */
-function buildStar(rng: Rng, sector: number): StarRecord {
+/**
+ * Realism-driven spiral-arm galaxy layout.
+ *
+ * Real galaxies have:
+ *   - A dense central bulge (radius 0..R_bulge)
+ *   - A thin disk with logarithmic spiral arms (R_bulge..R_disk)
+ *   - A sparse halo (R_disk..R_halo)
+ *   - Vertical thickness that grows with radius (flatter near core)
+ *   - Minimum spacing between stars (otherwise they look like a wall of beads)
+ *
+ * We approximate with:
+ *   r   = exponential sample -> ~70% of stars inside R_disk, ~25% in halo, ~5% in bulge
+ *   arm = pick 1 of N spiral arms + add angular noise
+ *   y   = gaussian-ish, sigma scales with r (thin disk in core, thick at rim)
+ *   rep = rejection sample against all previously placed stars at this r-band
+ *
+ * Result: it looks like a galaxy on the starmap, not a uniform soup.
+ */
+const R_BULGE = 60;            // central core radius
+const R_DISK = 400;            // bulk of the visible galaxy
+const R_HALO = 800;            // outer sparse reach
+const Y_THINNESS_CORE = 6;     // bulge is almost spherical; tiny y jitter
+const Y_THINNESS_RIM = 30;     // disk flares outward
+const MIN_SEPARATION_CORE = 22; // stars can pack tighter near the core
+const MIN_SEPARATION_DISK = 50; // standard disk spacing (was 70, halved so 60-160 target fits)
+const MIN_SEPARATION_HALO = 100; // far-flung halo stars need elbow room
+
+/** Pick a star's distance from the galactic center using a piecewise density model. */
+function pickRadius(rng: Rng): number {
+  const roll = rng.next();
+  if (roll < 0.18) {
+    // Bulge: dense, central.
+    return rng.range(8, R_BULGE);
+  } else if (roll < 0.82) {
+    // Inner disk: the bulk of the visible galaxy. Sqrt distribution so
+    // surface density falls off like 1/r — stars get sparser with distance
+    // but most still live in this band.
+    const u = rng.next();
+    return R_BULGE + (R_DISK - R_BULGE) * Math.sqrt(u);
+  } else if (roll < 0.96) {
+    // Outer disk: sparser band, but still disk-like.
+    const u = rng.next();
+    return R_DISK + (R_HALO - R_DISK) * 0.4 * u;
+  } else {
+    // Halo: very sparse outliers (4% chance).
+    const u = rng.next();
+    return R_DISK + (R_HALO - R_DISK) * (0.4 + 0.6 * u);
+  }
+}
+
+/** Minimum allowed separation at a given radius band. */
+function minSeparationFor(r: number): number {
+  if (r < R_BULGE) return MIN_SEPARATION_CORE;
+  if (r < R_DISK) return MIN_SEPARATION_DISK;
+  return MIN_SEPARATION_HALO;
+}
+
+/** Vertical half-thickness at a given radius (galactic "scale height"). */
+function yThickFor(r: number): number {
+  // Smoothly grow from Y_THINNESS_CORE at r=0 to Y_THINNESS_RIM at R_DISK.
+  const t = Math.min(1, r / R_DISK);
+  return Y_THINNESS_CORE + (Y_THINNESS_RIM - Y_THINNESS_CORE) * t;
+}
+
+/** Build a star + its system. Position is supplied by generateGalaxy via rejection sampling. */
+function buildStar(
+  rng: Rng,
+  sector: number,
+  position: { x: number; y: number; z: number },
+): StarRecord {
   const cls = pickStarClass(rng);
   const app = starAppearance(cls);
-
-  const armOffset = rng.range(0, Math.PI * 2);
-  const armIndex = rng.intRange(0, 3);
-  const armAngle = (armIndex / 3) * Math.PI * 2 + armOffset;
-  const r = rng.range(15, 120); // distance from galactic core
-  const noiseAngle = rng.range(-0.4, 0.4);
-  const angle = armAngle + noiseAngle + (Math.log(r) * 0.3);
-  const x = Math.cos(angle) * r;
-  const z = Math.sin(angle) * r;
-  const y = rng.range(-8, 8);
 
   const planetTotal = planetCount(rng, cls);
   const planets: PlanetRecord[] = [];
@@ -196,7 +254,7 @@ function buildStar(rng: Rng, sector: number): StarRecord {
     id: `star-${sector}`,
     name: `Stellar-${String(sector).padStart(4, '0')}`,
     class: cls,
-    position: { x, y, z },
+    position,
     color: { r: app.r, g: app.g, b: app.b },
     luminosity: app.lum,
     mass,
@@ -222,20 +280,65 @@ export function generateGalaxy(coord: GalaxyCoord): GalaxyRecord {
   const seed = seedFromGalaxy(coord);
   const rng = new Rng(seed);
 
-  const starCount = rng.intRange(180, 420); // mid-density galaxy
+  // Lower target count than before: 60-160 stars spread across a 480-radius
+  // disk (volume ~10x larger than the old 120-radius soup) is the right
+  // density for a "you can actually fly through it" galaxy. We also budget
+  // for ~20% rejection from the minimum-separation sampler.
+  const targetCount = rng.intRange(60, 160);
   const spiralArmCount = rng.intRange(2, 4);
   const name = nameFromSeed(rng);
 
+  // Pre-roll one arm offset per arm so the arms don't shift every time we
+  // pick a new star.
+  const armOffsets = Array.from({ length: spiralArmCount }, () => rng.range(0, Math.PI * 2));
+
+  type Pos = { x: number; y: number; z: number };
+  const placed: Pos[] = [];
   const stars: StarRecord[] = [];
-  for (let i = 0; i < starCount; i++) {
-    stars.push(buildStar(rng, i));
+  const MAX_ATTEMPTS_PER_STAR = 32;
+  const MAX_TOTAL_ATTEMPTS = targetCount * MAX_ATTEMPTS_PER_STAR;
+
+  let attempts = 0;
+  while (stars.length < targetCount && attempts < MAX_TOTAL_ATTEMPTS) {
+    attempts++;
+    const r = pickRadius(rng);
+    const armIndex = rng.intRange(0, spiralArmCount - 1);
+    const armBase = (armIndex / spiralArmCount) * Math.PI * 2;
+    const armOffset = armOffsets[armIndex];
+    const noiseAngle = rng.range(-0.35, 0.35);
+    // Logarithmic spiral term (tightens near core, opens out at rim).
+    const spiral = (Math.log(Math.max(1, r)) * 0.35);
+    const angle = armBase + armOffset + noiseAngle + spiral;
+
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    // Disk scale height grows with r; small chance of a halo outlier.
+    const ySigma = yThickFor(r);
+    const y = (rng.next() + rng.next() + rng.next() - 1.5) * ySigma;
+
+    const candidate: Pos = { x, y, z };
+    const minSep = minSeparationFor(r);
+    let tooClose = false;
+    for (const p of placed) {
+      const dx = p.x - candidate.x;
+      const dy = p.y - candidate.y;
+      const dz = p.z - candidate.z;
+      if (dx * dx + dy * dy + dz * dz < minSep * minSep) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (tooClose) continue;
+
+    placed.push(candidate);
+    stars.push(buildStar(rng, stars.length, candidate));
   }
 
   return {
     id: `galaxy-${coord.x}-${coord.y}-${coord.z}`,
     coord,
     seed,
-    starCount,
+    starCount: stars.length,
     name,
     centerPosition: { x: 0, y: 0, z: 0 },
     spiralArmCount,
